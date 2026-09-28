@@ -1,0 +1,19 @@
+# Виртуальное окружение (venv, virtualenv, poetry, venv)
+venv/
+.venv/
+env/
+*.env
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# VS Code (если тоже используешь)
+.vscode/
+.vs/
+
+# PyCharm (альтернатива .idea)
+.DS_Store
