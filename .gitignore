@@ -17,3 +17,6 @@ out/
 
 # PyCharm (альтернатива .idea)
 .DS_Store
+
+# logi
+logs/
