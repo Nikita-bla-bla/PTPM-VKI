@@ -2,136 +2,132 @@ import os
 import sys
 import math
 import logging
+from logging.handlers import RotatingFileHandler
 from typing import List, Tuple, Optional
 
-#НАСТРОЙКА ЛОГИРОВАНИЯ
-def setup_logger(name: str = "triangle_app") -> logging.Logger:
-    """Настраивает логгер: пишет в файл logs/app.log и в консоль (stdout)."""
-    os.makedirs("logs", exist_ok=True)
 
-    logger = logging.getLogger(name)
+# --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
+
+def setup_logging():
+    """
+    Настраивает логирование: консоль (INFO+) и файл (DEBUG+ с ротацией).
+    """
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
+    log_file_path = os.path.join(log_dir, "app.log")
+
+    logger = logging.getLogger()
+    # Очищаем хендлеры, если функция вызывается повторно (хотя здесь она вызывается один раз)
+    if logger.handlers:
+        logger.handlers.clear()
+
     logger.setLevel(logging.DEBUG)
 
-    # Чтобы обработчики не дублировались при повторном вызове
-    if logger.handlers:
-        return logger
-
     formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)-8s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        fmt="%(asctime)s | [%(levelname)-7s] | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    # Запись в файл
-    file_handler = logging.FileHandler("logs/app.log", encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-
-    # Вывод в консоль — в stdout, чтобы порядок совпадал с print/input
-    console_handler = logging.StreamHandler(stream=sys.stdout)
+    console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+
+    file_handler = RotatingFileHandler(
+        log_file_path,
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
     return logger
 
 
-logger = setup_logger()
+logger = setup_logging()
 
-
-#КОНСТАНТЫ РЕЗУЛЬТАТОВ
-# Координаты при ошибочных числовых данных (не треугольник)
 COORDS_ERROR = [(-1, -1)] * 3
-# Координаты при нечисловых данных
 COORDS_INVALID = [(-2, -2)] * 3
 
 
-#РАЗБОР ВХОДНЫХ ДАННЫХ
 def parse_side(value: str) -> Optional[float]:
-    """
-    Преобразует строку в положительное вещественное число.
-    Возвращает None, если значение невалидно.
-    """
     try:
         number = float(value.strip())
     except (ValueError, AttributeError):
         return None
-    if number <= 0:
+
+    if math.isnan(number) or math.isinf(number) or number <= 0:
         return None
+
     return number
 
 
-
-#РАСЧЁТ КООРДИНАТ ВЕРШИН
 def _fit_to_field(coords: List[Tuple[float, float]], size: int = 100) -> List[Tuple[int, int]]:
-    """
-    Смещает и, при необходимости, масштабирует координаты так,
-    чтобы фигура попала в поле size x size пикселей.
-    """
-    margin = 10  # отступ от края
+    margin = 10
+    if not coords:
+        return []
+
     xs = [p[0] for p in coords]
     ys = [p[1] for p in coords]
     min_x, min_y = min(xs), min(ys)
 
-    # Сдвигаем фигуру в положительную область с отступом
     shifted = [
         (x - min_x + margin, y - min_y + margin)
         for x, y in coords
     ]
 
-    # Если фигура не помещается — масштабируем
-    max_coord = max(max(p[0] for p in shifted), max(p[1] for p in shifted))
+    max_coord_val = max(max(p[0] for p in shifted), max(p[1] for p in shifted))
     limit = size - margin
-    if max_coord > limit:
-        scale = limit / max_coord
-        shifted = [(x * scale, y * scale) for x, y in shifted]
 
-    # Округляем до int
+    if max_coord_val > limit and max_coord_val > 0:
+        scale = limit / max_coord_val
+        shifted = [(x * scale, y * scale) for x, y in shifted]
+        logger.debug("Применено масштабирование: scale=%.4f", scale)
+
     return [(int(round(x)), int(round(y))) for x, y in shifted]
 
 
 def compute_vertices(a: float, b: float, c: float) -> List[Tuple[int, int]]:
-    """
-    Вычисляет координаты трёх вершин треугольника со сторонами a, b, c.
-    A = (0,0), B = (c,0), C — по теореме косинусов.
-    """
+    logger.debug("Вычисление координат для сторон: a=%s, b=%s, c=%s", a, b, c)
+
     ax, ay = 0.0, 0.0
     bx, by = c, 0.0
 
-    # Угол при вершине A
-    cos_a = (a * a + c * c - b * b) / (2 * a * c)
-    # Защита от числовой погрешности
+    denominator = 2 * b * c
+    if denominator == 0:
+        return [(0, 0), (0, 0), (0, 0)]
+
+    cos_a = (b * b + c * c - a * a) / denominator
     cos_a = max(-1.0, min(1.0, cos_a))
 
-    cx = a * cos_a
-    cy = a * math.sin(math.acos(cos_a))
+    angle_a = math.acos(cos_a)
+    cx = b * cos_a
+    cy = b * math.sin(angle_a)
+
+    logger.debug("Raw coords: A(0,0), B(%s,0), C(%s, %s)", c, cx, cy)
 
     return _fit_to_field([(ax, ay), (bx, by), (cx, cy)])
 
 
-
-#                    ОСНОВНАЯ ЛОГИКА
 def classify_triangle(s1: str, s2: str, s3: str) -> Tuple[str, List[Tuple[int, int]]]:
-    """
-    Основная функция. Принимает три строки со сторонами.
-    Возвращает (тип треугольника, координаты вершин).
-    """
     a = parse_side(s1)
     b = parse_side(s2)
     c = parse_side(s3)
 
-    # 1. Нечисловые данные
     if a is None or b is None or c is None:
-        logger.warning("Обнаружены нечисловые данные: %r, %r, %r", s1, s2, s3)
+        logger.warning("Обнаружены нечисловые или недопустимые данные: '%s', '%s', '%s'", s1, s2, s3)
         return "", COORDS_INVALID
 
-    # 2. Не выполняется неравенство треугольника
-    if a + b <= c or a + c <= b or b + c <= a:
-        logger.info("Неравенство треугольника нарушено: a=%s, b=%s, c=%s", a, b, c)
+    logger.debug("Распарсенные стороны: a=%s, b=%s, c=%s", a, b, c)
+
+    sides = sorted([a, b, c])
+    if sides[0] + sides[1] <= sides[2]:
+        logger.info("Неравенство треугольника нарушено: %s + %s <= %s", sides[0], sides[1], sides[2])
         return "не треугольник", COORDS_ERROR
 
-    # 3. Определяем вид треугольника
-    eps = 1e-9  # допуск для сравнения float
+    eps = 1e-9
     equal_ab = math.isclose(a, b, rel_tol=eps, abs_tol=eps)
     equal_bc = math.isclose(b, c, rel_tol=eps, abs_tol=eps)
     equal_ac = math.isclose(a, c, rel_tol=eps, abs_tol=eps)
@@ -143,33 +139,58 @@ def classify_triangle(s1: str, s2: str, s3: str) -> Tuple[str, List[Tuple[int, i
     else:
         kind = "разносторонний"
 
+    logger.info("Определен тип треугольника: %s", kind)
+
     coords = compute_vertices(a, b, c)
     return kind, coords
 
 
-
-#                       ТОЧКА ВХОДА
+# ОСНОВНАЯ ЛОГИКА С ЦИКЛОМ
 def main() -> None:
-    # Самый первый лог
-    logger.info("Программа запущена")
+    logger.info("Программа запущена в циклическом режиме")
+    print("=" * 30)
+    print("Калькулятор треугольников")
+    print("Для выхода введите 'exit' или нажмите Ctrl+C")
+    print("=" * 30)
 
-    try:
-        line1 = input("Введите длину стороны A: ")
-        line2 = input("Введите длину стороны B: ")
-        line3 = input("Введите длину стороны C: ")
-    except EOFError:
-        logger.error("Входные данные не получены (EOF)")
-        sys.exit(1)
+    while True:
+        try:
+            line1 = input("\nВведите длину стороны A (или 'exit'): ")
 
-    logger.debug("Входные строки: %r, %r, %r", line1, line2, line3)
+            # Проверка на выход
+            if line1.strip().lower() in ['exit', 'quit', 'выход']:
+                logger.info("Пользователь запросил выход из программы")
+                print("До свидания!")
+                break
 
-    triangle_type, coords = classify_triangle(line1, line2, line3)
+            line2 = input("Введите длину стороны B: ")
+            line3 = input("Введите длину стороны C: ")
 
-    # Вывод результата
-    print("Тип треугольника:", triangle_type if triangle_type else "(пусто)")
-    print("Координаты вершин:", coords)
+        except EOFError:
+            # Если ввод перенаправлен из файла и он закончился
+            logger.info("Конец входного потока (EOF). Завершение работы.")
+            break
+        except KeyboardInterrupt:
+            # Обработка Ctrl+C
+            logger.info("Получен сигнал прерывания (Ctrl+C). Завершение работы.")
+            print("\nПрограмма остановлена пользователем.")
+            break
 
-    logger.info("Результат: тип=%r, координаты=%s", triangle_type, coords)
+        logger.debug("Получены входные строки: %r, %r, %r", line1, line2, line3)
+
+        triangle_type, coords = classify_triangle(line1, line2, line3)
+
+        # Вывод результата пользователю
+        print("-" * 30)
+        if triangle_type:
+            print(f"Тип треугольника: {triangle_type}")
+        else:
+            print("Тип треугольника: (ошибка ввода)")
+
+        print(f"Координаты вершин: {coords}")
+        print("-" * 30)
+
+        logger.info("Цикл завершен. Результат: тип=%r", triangle_type)
 
 
 if __name__ == "__main__":
